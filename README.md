@@ -6,6 +6,13 @@ You will be using SpaceX API. <https://docs.spacexdata.com>
 
 Your app should only utilize `https://api.spacexdata.com/v3/launches` endpoint.
 
+## Important Note For the Output
+The API mentioned above was not working during the time of the development, due to that I used a different API for frontend demonstration purposes https://dummyjson.com/products.
+
+- Run npm install
+- if an error occured delete `package.lock.json` and run npm install
+- node 14 is the version used for the output
+
 ---
 
 What the app should do:
