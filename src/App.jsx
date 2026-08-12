@@ -1,28 +1,32 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import Spinner from './components/Spinner';
-import './App.css';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import Spinner from "./components/Spinner";
+import "./App.css";
 
-const API_BASE = 'https://ll.thespacedevs.com/2.3.0/launches/';
+const API_BASE = "https://dummyjson.com/products";
 const PAGE_LIMIT = 10;
-const DEFAULT_SEARCH = 'Starlink';
 
 function App() {
-  const [launches, setLaunches] = useState([]);
+  const [products, setProducts] = useState([]);
   const [nextUrl, setNextUrl] = useState(null);
   const [loading, setLoading] = useState(false);
   const [fetchingMore, setFetchingMore] = useState(false);
   const [error, setError] = useState(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedLaunch, setSelectedLaunch] = useState(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedProduct, setSelectedProduct] = useState(null);
   const scrollRef = useRef(null);
   const loadMoreTriggerRef = useRef(null);
   const observerRef = useRef(null);
   const cacheRef = useRef({});
 
-  const buildUrl = (query, offset = 0) =>
-    `${API_BASE}?limit=${PAGE_LIMIT}&offset=${offset}&search=${encodeURIComponent(query)}`;
+  const buildUrl = (skip = 0) => `${API_BASE}?limit=${PAGE_LIMIT}&skip=${skip}`;
 
-  const fetchLaunches = async (url, append = false) => {
+  const fetchProducts = useCallback(async (url, append = false) => {
     try {
       if (append) {
         setFetchingMore(true);
@@ -33,10 +37,11 @@ function App() {
 
       const cachedPage = cacheRef.current[url];
       if (cachedPage) {
-        setLaunches(prev => (append ? [...prev, ...cachedPage.results] : cachedPage.results));
+        setProducts((prev) =>
+          append ? [...prev, ...cachedPage.results] : cachedPage.results,
+        );
         setNextUrl(cachedPage.nextUrl);
         setError(null);
-        setThrottleResetAt(null);
         return;
       }
 
@@ -44,66 +49,75 @@ function App() {
       const data = await response.json();
 
       if (!response.ok) {
-        const retryAfter = response.headers.get('retry-after');
-        const throttleDetail = data?.detail || data?.message || data?.error || '';
-        const waitSeconds = retryAfter || data?.expected_available_in || data?.wait || '';
+        const retryAfter = response.headers.get("retry-after");
+        const throttleDetail =
+          data?.detail || data?.message || data?.error || "";
+        const waitSeconds =
+          retryAfter || data?.expected_available_in || data?.wait || "";
         const throttleMessage = throttleDetail
-          ? `${throttleDetail}${waitSeconds ? ` Retry.` : ''}`
-          : `Unable to load launches (${response.status}).`;
+          ? `${throttleDetail}${waitSeconds ? ` Retry.` : ""}`
+          : `Unable to load products (${response.status}).`;
 
         if (response.status === 429) {
-          throw new Error(throttleMessage || 'Too many requests. Please try again later.');
+          throw new Error(
+            throttleMessage || "Too many requests. Please try again later.",
+          );
         }
 
-        throw new Error(`Unable to load launches (${response.status}).`);
+        throw new Error(`Unable to load products (${response.status}).`);
       }
 
-      const results = Array.isArray(data.results) ? data.results : [];
-      const nextPage = data.next || null;
+      const results = Array.isArray(data.products) ? data.products : [];
+      const nextOffset = data.skip + data.limit;
+      const nextPage = nextOffset < data.total ? buildUrl(nextOffset) : null;
       cacheRef.current[url] = { results, nextUrl: nextPage };
 
-      setLaunches(prev => (append ? [...prev, ...results] : results));
+      setProducts((prev) => (append ? [...prev, ...results] : results));
       setNextUrl(nextPage);
       setError(null);
     } catch (err) {
-      setError(err.message || 'Unexpected error fetching launch data.');
+      setError(err.message || "Unexpected error fetching product data.");
     } finally {
       setLoading(false);
       setFetchingMore(false);
     }
-  };
-
-  useEffect(() => {
-    fetchLaunches(buildUrl(DEFAULT_SEARCH));
   }, []);
 
-  const filteredLaunches = useMemo(() => {
+  useEffect(() => {
+    fetchProducts(buildUrl());
+  }, [fetchProducts]);
+
+  const filteredProducts = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
-    if (!term) return launches;
-    return launches.filter(launch => {
-      const name = launch.name?.toLowerCase() || '';
-      const missionName = launch.mission?.name?.toLowerCase() || '';
-      const status = launch.status?.name?.toLowerCase() || '';
-      const rocket = launch.rocket?.configuration?.name?.toLowerCase() || '';
+    if (!term) return products;
+    return products.filter((product) => {
+      const title = product.title?.toLowerCase() || "";
+      const description = product.description?.toLowerCase() || "";
+      const category = product.category?.toLowerCase() || "";
+      const brand = product.brand?.toLowerCase() || "";
+      const tags = Array.isArray(product.tags)
+        ? product.tags.join(" ").toLowerCase()
+        : "";
       return (
-        name.includes(term) ||
-        missionName.includes(term) ||
-        status.includes(term) ||
-        rocket.includes(term)
+        title.includes(term) ||
+        description.includes(term) ||
+        category.includes(term) ||
+        brand.includes(term) ||
+        tags.includes(term)
       );
     });
-  }, [launches, searchTerm]);
+  }, [products, searchTerm]);
 
-  const handleSearchSubmit = event => {
+  const handleSearchSubmit = (event) => {
     event.preventDefault();
   };
 
-  const loadMore = () => {
-    if (loading || fetchingMore || !nextUrl || isThrottled) {
+  const loadMore = useCallback(() => {
+    if (loading || fetchingMore || !nextUrl) {
       return;
     }
-    fetchLaunches(nextUrl, true);
-  };
+    fetchProducts(nextUrl, true);
+  }, [fetchingMore, fetchProducts, loading, nextUrl]);
 
   useEffect(() => {
     const container = scrollRef.current;
@@ -114,46 +128,27 @@ function App() {
       observerRef.current = null;
     }
 
-    if (!container || !sentinel || loading || fetchingMore || !nextUrl || isThrottled) {
+    if (!container || !sentinel || loading || fetchingMore || !nextUrl) {
       return undefined;
     }
 
     const observer = new IntersectionObserver(
-      entries => {
+      (entries) => {
         if (entries[0]?.isIntersecting) {
           loadMore();
         }
       },
       {
         root: container,
-        rootMargin: '180px',
-      }
+        rootMargin: "180px",
+      },
     );
 
     observer.observe(sentinel);
     observerRef.current = observer;
 
     return () => observer.disconnect();
-  }, [loading, fetchingMore, nextUrl, isThrottled, launches.length]);
-
-  const formatDate = value => {
-    if (!value) return 'Unknown date';
-    try {
-      return new Date(value).toLocaleString();
-    } catch {
-      return value;
-    }
-  };
-
-  const getStatusClass = status => {
-    if (!status || !status.abbrev) {
-      return 'launch__status--info';
-    }
-    if (/success/i.test(status.abbrev)) return 'launch__status--success';
-    if (/failure|fail|abort/i.test(status.abbrev)) return 'launch__status--danger';
-    if (/pending|hold|go/i.test(status.abbrev)) return 'launch__status--warning';
-    return 'launch__status--info';
-  };
+  }, [fetchingMore, loadMore, loading, nextUrl, products.length]);
 
   return (
     <div className="App">
@@ -161,17 +156,19 @@ function App() {
         <section className="launch">
           <div className="launch__header">
             <div>
-              <h1>Starlink launches</h1>
-              <p className="launch__subtitle">Search, scroll, and inspect Starlink launch history.</p>
+              <h1>Product catalog</h1>
+              <p className="launch__subtitle">
+                Search and scroll through fetched product data.
+              </p>
             </div>
             <form className="search" onSubmit={handleSearchSubmit}>
               <input
                 type="search"
                 className="search__input"
                 value={searchTerm}
-                onChange={event => setSearchTerm(event.target.value)}
-                placeholder="Search Starlink launches..."
-                aria-label="Search launches"
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="Search products..."
+                aria-label="Search products"
               />
               <button type="submit" className="btn btn--primary">
                 Search
@@ -187,7 +184,7 @@ function App() {
                 className="btn btn--primary"
                 onClick={() => {
                   setError(null);
-                  fetchLaunches(buildUrl(DEFAULT_SEARCH));
+                  fetchProducts(buildUrl());
                 }}
               >
                 Retry
@@ -196,51 +193,58 @@ function App() {
           )}
 
           <div className="launch__wrapper" ref={scrollRef}>
-            {loading && launches.length === 0 ? (
+            {loading && products.length === 0 ? (
               <div className="loading-state">
                 <Spinner color="#1976d2" />
-                <p>Loading launch data...</p>
+                <p>Loading product data...</p>
               </div>
             ) : (
               <div className="launch__list">
-                {filteredLaunches.map(launch => {
+                {filteredProducts.map((product) => {
                   const imageUrl =
-                    launch.image?.image_url ||
-                    launch.mission?.image ||
-                    launch.rocket?.configuration?.image?.image_url ||
+                    product.thumbnail ||
+                    (Array.isArray(product.images)
+                      ? product.images[0]
+                      : null) ||
                     null;
 
                   return (
                     <button
-                      key={launch.id}
+                      key={product.id}
                       type="button"
                       className="launch__item"
-                      onClick={() => setSelectedLaunch(launch)}
+                      onClick={() => setSelectedProduct(product)}
                     >
                       <div className="launch__body">
                         <div className="launch__media">
                           {imageUrl ? (
-                            <img src={imageUrl} alt={launch.name} />
+                            <img src={imageUrl} alt={product.title} />
                           ) : (
-                            <div className="launch__image-fallback">No preview</div>
+                            <div className="launch__image-fallback">
+                              No preview
+                            </div>
                           )}
                         </div>
                         <div className="launch__details">
                           <div className="launch__top-row">
-                            <h2>{launch.name}</h2>
-                            <span className={`launch__status ${getStatusClass(launch.status)}`}>
-                              {launch.status?.abbrev || 'Unknown'}
-                            </span>
+                            <h2>{product.title}</h2>
+                            {product.brand && (
+                              <span className="launch__brand">
+                                {product.brand}
+                              </span>
+                            )}
                           </div>
                           <p className="launch__description">
-                            {launch.mission?.description || 'No mission description available.'}
+                            {product.description ||
+                              "No product description available."}
                           </p>
                           <div className="launch__meta">
-                            <span className="launch__meta-item">{formatDate(launch.net)}</span>
                             <span className="launch__meta-item">
-                              {launch.rocket?.configuration?.name || 'Unknown rocket'}
+                              ${product.price?.toFixed(2) ?? "N/A"}
                             </span>
-                            <span className="launch__meta-item">{launch.pad?.name || 'Unknown pad'}</span>
+                            <span className="launch__meta-item">
+                              Stock: {product.stock ?? "N/A"}
+                            </span>
                           </div>
                         </div>
                       </div>
@@ -248,22 +252,26 @@ function App() {
                   );
                 })}
 
-                {!loading && launches.length === 0 && (
-                  <p className="no-content">No launches loaded yet.</p>
+                {!loading && products.length === 0 && (
+                  <p className="no-content">No products loaded yet.</p>
                 )}
-                {!loading && launches.length > 0 && filteredLaunches.length === 0 && (
-                  <p className="no-content">No loaded launches match &quot;{searchTerm}&quot;.</p>
-                )}
+                {!loading &&
+                  products.length > 0 &&
+                  filteredProducts.length === 0 && (
+                    <p className="no-content">
+                      No loaded products match &quot;{searchTerm}&quot;.
+                    </p>
+                  )}
 
                 {fetchingMore && (
                   <div className="bottom-loader">
                     <Spinner color="#1976d2" />
-                    <p>Loading more launches…</p>
+                    <p>Loading more products...</p>
                   </div>
                 )}
 
-                {!nextUrl && launches.length > 0 && !fetchingMore && (
-                  <div className="max-reached">No more launches to load.</div>
+                {!nextUrl && products.length > 0 && !fetchingMore && (
+                  <div className="max-reached">No more products to load.</div>
                 )}
 
                 <div ref={loadMoreTriggerRef} className="scroll-sentinel" />
@@ -273,48 +281,68 @@ function App() {
         </section>
       </div>
 
-      {selectedLaunch && (
+      {selectedProduct && (
         <div className="modal" role="dialog" aria-modal="true">
-          <div className="modal__backdrop" onClick={() => setSelectedLaunch(null)} />
+          <div
+            className="modal__backdrop"
+            onClick={() => setSelectedProduct(null)}
+          />
           <div className="modal__content" role="document">
-            <button className="modal__close" onClick={() => setSelectedLaunch(null)} aria-label="Close details">
+            <button
+              className="modal__close"
+              onClick={() => setSelectedProduct(null)}
+              aria-label="Close details"
+            >
               ×
             </button>
             <div className="modal__header">
-              <h2>{selectedLaunch.name}</h2>
-              <span className={`launch__status ${getStatusClass(selectedLaunch.status)}`}>
-                {selectedLaunch.status?.name || selectedLaunch.status?.abbrev || 'Status Unknown'}
-              </span>
+              <h2>{selectedProduct.title}</h2>
+              {selectedProduct.brand && (
+                <span className="modal__brand">{selectedProduct.brand}</span>
+              )}
             </div>
             <div className="modal__body">
-              {selectedLaunch.image?.image_url ? (
-                <img className="modal__image" src={selectedLaunch.image.image_url} alt={selectedLaunch.name} />
+              {selectedProduct.thumbnail ||
+              (selectedProduct.images && selectedProduct.images[0]) ? (
+                <img
+                  className="modal__image"
+                  src={selectedProduct.thumbnail || selectedProduct.images[0]}
+                  alt={selectedProduct.title}
+                />
               ) : (
                 <div className="modal__image-fallback">No image available</div>
               )}
               <div className="modal__details">
-                <p>{selectedLaunch.mission?.description || 'Mission description not available.'}</p>
+                <p>
+                  {selectedProduct.description ||
+                    "Product description not available."}
+                </p>
                 <div className="launch__meta modal__meta">
-                  <span className="launch__meta-item">NET: {formatDate(selectedLaunch.net)}</span>
                   <span className="launch__meta-item">
-                    Rocket: {selectedLaunch.rocket?.configuration?.full_name || selectedLaunch.rocket?.configuration?.name || 'Unknown'}
+                    Price: ${selectedProduct.price?.toFixed(2) ?? "N/A"}
                   </span>
-                  <span className="launch__meta-item">Pad: {selectedLaunch.pad?.name || 'Unknown'}</span>
+                  <span className="launch__meta-item">
+                    Rating: {selectedProduct.rating ?? "N/A"}
+                  </span>
+                  <span className="launch__meta-item">
+                    Stock: {selectedProduct.stock ?? "N/A"}
+                  </span>
                 </div>
                 <div className="modal__extra">
                   <p>
-                    <strong>Launch provider:</strong> {selectedLaunch.launch_service_provider?.name || 'Unknown'}
+                    <strong>Brand:</strong> {selectedProduct.brand || "Unknown"}
                   </p>
                   <p>
-                    <strong>Location:</strong> {selectedLaunch.pad?.location?.name || selectedLaunch.pad?.name || 'Unknown'}
+                    <strong>Category:</strong>{" "}
+                    {selectedProduct.category || "Unknown"}
                   </p>
                   <p>
-                    <strong>Mission:</strong> {selectedLaunch.mission?.name || 'N/A'}
+                    <strong>SKU:</strong> {selectedProduct.sku || "N/A"}
                   </p>
-                  {selectedLaunch.mission?.type && <p><strong>Type:</strong> {selectedLaunch.mission.type}</p>}
-                  {selectedLaunch.mission?.orbit?.name && (
-                    <p><strong>Orbit:</strong> {selectedLaunch.mission.orbit.name}</p>
-                  )}
+                  <p>
+                    <strong>Warranty:</strong>{" "}
+                    {selectedProduct.warrantyInformation || "N/A"}
+                  </p>
                 </div>
               </div>
             </div>
